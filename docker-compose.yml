@@ -1,0 +1,106 @@
+# https://github.com/8gears/containerized-guacamole/blob/master/docker-compose.yml
+# set .env vars: TZ, DOMAIN_NAME 
+#    PG_DATADIR, PG_DATAINIT, POSTGRES_PASSWORD , LDAP_*
+version: '3'
+
+services:
+  init-guac-db:
+    container_name: guac-init-db
+    image: guacamole/guacamole:latest
+    environment:
+      - TZ
+    networks:
+      - postgresql # internal 
+    command: ["/bin/sh", "-c", "test -e /init/initdb.sql && echo 'init file already exists' || /opt/guacamole/bin/initdb.sh --postgres > /init/initdb.sql" ]
+    volumes:
+      - postgres_init:/init    
+
+  postgres:
+    container_name: guac-postgres
+    image: tomcat_tomcat-postgres
+    environment:
+      - TZ
+      - POSTGRES_USER=guacadb
+      - POSTGRES_INITDB_ARGS="--auth-host=md5"
+      - POSTGRES_PASSWORD # set in .env
+    restart: unless-stopped
+    volumes:
+      - postgres_init:/docker-entrypoint-initdb.d        
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "sh", "-c", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5m
+      timeout: 5s
+      retries: 5
+    networks:
+      - postgresql 
+    depends_on:
+      - init-guac-db
+
+  guacd:
+    container_name: guacd
+    image: guacamole/guacd:latest
+    restart: unless-stopped
+    environment:
+      - TZ
+    networks:
+      - postgresql 
+
+  guac:
+    container_name: guac
+    image: guacamole/guacamole:latest
+    environment:
+      - TZ
+      - GUACD_HOSTNAME=guacd
+      - POSTGRESQL_AUTO_CREATE_ACCOUNTS=true
+      - POSTGRES_DATABASE=guacadb
+      - POSTGRES_HOSTNAME=postgres
+      - POSTGRES_USER=guacadb
+      - LDAP_ENCRYPTION_METHOD=none
+      - LDAP_FOLLOW_REFERRALS=true
+      - LDAP_GROUP_NAME_ATTRIBUTE=cn
+      - LDAP_GROUP_SEARCH_FILTER=(objectCategory=group)(member)
+      - LDAP_MEMBER_ATTRIBUTE=memberof
+      - LDAP_USERNAME_ATTRIBUTE=sAMAccountName
+      - LDAP_USER_SEARCH_FILTER=(objectCategory=person)(objectClass=user)(!useraccountcontrol:1.2.840.113556.1.4.803:=2)
+      - LDAP_SEARCH_BIND_PASSWORD 
+      - POSTGRES_PASSWORD 
+      - LDAP_HOSTNAME
+      - LDAP_GROUP_BASE_DN
+      - LDAP_USER_BASE_DN
+      - LDAP_SEARCH_BIND_DN
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik_proxy
+      - traefik.http.services.guac.loadbalancer.server.port=8080
+      - traefik.http.routers.guac.rule=Host(`${DOMAIN_NAME}`)
+      - traefik.http.routers.guac.tls.certresolver=letsencrypt
+      - traefik.frontend.entryPoints=http,https
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - guacd  
+    networks:
+      - traefik_proxy
+      - postgresql # internal 
+
+volumes:
+  postgres:
+     driver_opts:
+           type: none
+           device: ${PG_DATADIR}
+           o: bind
+  postgres_init:
+     driver_opts:
+           type: none
+           device: ${PG_DATAINIT}
+           o: bind
+           
+networks:
+  traefik_proxy:
+    external: true
+  postgresql:
+    driver: bridge
+    ipam:
+     config:
+       - subnet: 192.168.111.0/24
