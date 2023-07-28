@@ -97,7 +97,7 @@ volumes:
            o: bind
            
 networks:
-  traefik_proxy:
+  proxy_default:
     external: true
   postgresql:
     driver: bridge
