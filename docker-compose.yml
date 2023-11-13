@@ -7,17 +7,13 @@ services:
   init-guac-db:
     container_name: guac-init-db
     image: guacamole/guacamole:latest
-    environment:
-      - TZ
-    networks:
-      - postgresql # internal 
     command: ["/bin/sh", "-c", "test -e /init/initdb.sql && echo 'init file already exists' || /opt/guacamole/bin/initdb.sh --postgres > /init/initdb.sql" ]
     volumes:
-      - postgres_init:/init    
+      - postgres_init:/init
 
   postgres:
     container_name: guac-postgres
-    image: tomcat_tomcat-postgres
+    image: postgres:15-alpine
     environment:
       - TZ
       - POSTGRES_USER=guacadb
@@ -29,11 +25,11 @@ services:
       - postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "sh", "-c", "pg_isready -U ${POSTGRES_USER}"]
-      interval: 5m
-      timeout: 5s
+      interval: 1m
+      timeout: 2s
       retries: 5
     networks:
-      - postgresql 
+      - guac 
     depends_on:
       - init-guac-db
 
@@ -44,7 +40,9 @@ services:
     environment:
       - TZ
     networks:
-      - postgresql 
+      - guac 
+    depends_on:
+      - postgres
 
   guac:
     container_name: guac
@@ -71,7 +69,7 @@ services:
       - LDAP_SEARCH_BIND_DN
     labels:
       - traefik.enable=true
-      - traefik.docker.network=traefik_proxy
+      - traefik.docker.network=proxy_default
       - traefik.http.services.guac.loadbalancer.server.port=8080
       - traefik.http.routers.guac.rule=Host(`${DOMAIN_NAME}`)
       - traefik.http.routers.guac.tls.certresolver=letsencrypt
@@ -81,8 +79,8 @@ services:
       - postgres
       - guacd  
     networks:
-      - traefik_proxy
-      - postgresql # internal 
+      - proxy_default
+      - guac 
 
 volumes:
   postgres:
@@ -99,8 +97,9 @@ volumes:
 networks:
   proxy_default:
     external: true
+  guac:
   postgresql:
     driver: bridge
     ipam:
      config:
-       - subnet: 192.168.111.0/24
+       - subnet: ${CDIR_NETWORK}
